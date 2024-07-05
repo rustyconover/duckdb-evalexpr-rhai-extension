@@ -4,7 +4,7 @@
 
 namespace duckdb {
 
-class LindelExtension : public Extension {
+class EvalexprRhaiExtension : public Extension {
 public:
 	void Load(DuckDB &db) override;
 	std::string Name() override;

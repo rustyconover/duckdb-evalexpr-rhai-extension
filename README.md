@@ -1,279 +1,166 @@
-# Lindel (linearizer-delinearizer) Extension for DuckDB
+# Rhai Extension for DuckDB
 
 ---
 
-![Ducks filling Space-Filling Curves](./docs/space-filling-curve-ducks.jpg)
+![Ducks reading and following scripts](./images/ducks-evalexpr-rhai.jpg)
 
-This `lindel` extension adds functions for the [linearization](https://en.wikipedia.org/wiki/Linearization) and delinearization of numeric arrays in [DuckDB](https://www.duckdb.org).  It allows you to order multi-dimensional data using space-filling curves.
+This `evalexpr_rhai` extension adds functions that allow the [Rhai](https://rhai.rs) language to be evaluated in [DuckDB's](https://www.duckdb.org) SQL statements.
 
-## What is linearization?
+## What is [Rhai](https://rhai.rs)?
 
-<image align="right" src="https://upload.wikimedia.org/wikipedia/commons/thumb/7/7c/Hilbert-curve_rounded-gradient-animated.gif/440px-Hilbert-curve_rounded-gradient-animated.gif" alt="An animation of the Hilbert Curve from Wikipedia" width="200px"/>
+[<image align="right" src="https://rhai.rs/book/images/logo/rhai-logo-transparent-colour-black.svg" width="200px"/>](https://rhai.rs)
 
-[Linearization](https://en.wikipedia.org/wiki/Linearization) maps multi-dimensional data into a one-dimensional sequence while [preserving locality](https://en.wikipedia.org/wiki/Locality_of_reference), enhancing the efficiency of data structures and algorithms for spatial data, such as in databases, GIS, and memory caches.
+A small, fast, easy-to-use scripting language and evaluation engine that integrates tightly with Rust.  It is very similar to Rust and JavaScript and uses dynamic typing.
 
-> "The principle of locality states that programs tend to reuse data and instructions they have used recently."
+You can learn more about Rhai by reading the [Rhai book](https://rhai.rs/book/).
 
-In SQL, sorting by a single column (e.g., time or identifier) is often sufficient, but sometimes queries involve multiple fields, such as:
+## Why add this extension to DuckDB?
 
-- Time and identifier (historical trading data)
-- Latitude and Longitude (GIS applications)
-- Latitude, Longitude, and Altitude (flight tracking)
-- Latitude, Longitude, Altitude, and Time (flight history)
+DuckDB offers a wide variety of SQL-based functions, but there are times when you want to write some code that is a bit more complicated than what SQL provides.
 
-Sorting by a single field isn't optimal for multi-field queries. Linearization maps multiple fields into a single value, while preserving locality—meaning values close in the original representation remain close in the mapped representation.
-
-#### Where has this been used before?
-
-DataBricks has long supported Z-Ordering (they also now default to using the Hilbert curve for the ordering).  This [video explains how Delta Lake queries are faster when the data is Z-Ordered.](https://www.youtube.com/watch?v=A1aR1A8OwOU) This extension also allows DuckDB to write files with the same ordering optimization.
-
-Numerous articles describe the benefits of applying a Z-Ordering/Hilbert ordering to data for query performance.
-
-- [https://delta.io/blog/2023-06-03-delta-lake-z-order/](https://delta.io/blog/2023-06-03-delta-lake-z-order/)
-- [https://blog.cloudera.com/speeding-up-queries-with-z-order/](https://blog.cloudera.com/speeding-up-queries-with-z-order/)
-- [https://www.linkedin.com/pulse/z-order-visualization-implementation-nick-karpov/](https://www.linkedin.com/pulse/z-order-visualization-implementation-nick-karpov/)
-
-From one of the articles:
-
-![Delta Lake Query Speed Improvement from using Z-Ordering](https://delta.io/static/c1801cd120999d77de0ee51b227acccb/a13c9/image1.png)
-
-Your particular performance improvements will vary, but for some query patterns Z-Ordering and Hilbert ordering will make quite a big difference.
-
-## When would I use this?
-
-For query patterns across multiple numeric or short text columns, consider sorting rows using Hilbert encoding when storing data in Parquet:
+## Examples
 
 ```sql
-COPY (
-  select * from 'source.csv'
-  order by
-  hilbert_encode([source_data.time, source_data.symbol_id]::integer[2])
-)
-TO 'example.parquet' (FORMAT PARQUET)
+load json;
+load evalexpr_rhai;
 
--- or if dealing with latitude and longitude
+-- Just a simple evaluation of an expression.
 
-COPY (
-  select * from 'source.csv'
-  order by
-  hilbert_encode([source_data.lat, source_data.lon]::double[2])
-) TO 'example.parquet' (FORMAT PARQUET)
+D select evalexpr_rhai('5+6').ok;
+┌───────────────────────────┐
+│ (evalexpr_rhai('5+6')).ok │
+│           json            │
+├───────────────────────────┤
+│ 11                        │
+└───────────────────────────
 ```
 
-The Parquet file format stores statistics for each row group. Since rows are sorted with locality into these row groups the query execution may be able to skip row groups that contain no relevant rows, leading to faster query execution times.
+Expressions can either be passed in the statement itself or from a column in a database.  This means that you can evaluate expressions stored in columns for their result.
 
-## Encoding Types
+If a statement is passed as a constant expression it is compiled and cached for faster execution.
 
-This extension offers two different encoding types, [Hilbert](https://en.wikipedia.org/wiki/Hilbert_curve) and [Morton](https://en.wikipedia.org/wiki/Z-order_curve) encoding.
+```sql
+-- Setup a table that determines group members, the logic
+-- for membership can be managed by an administrator
+create table group_membership(group_name text, logic text);
 
-### Hilbert Encoding
+insert into group_membership values
+  ('managers', 'context.name == "George" || context.name == "Rusty"'),
+  ('shift_leads', 'context.name == "John"'),
+  ('employees', 'context.name == "Alex"');
 
-Hilbert encoding uses the Hilbert curve, a continuous fractal space-filling curve named after [David Hilbert](https://en.wikipedia.org/wiki/David_Hilbert). It rearranges coordinates based on the Hilbert curve's path, preserving spatial locality better than Morton encoding.
+-- Determine which groups the user is a member of
+-- by evaluating the logic from the membership table.
+select distinct group_name
+from group_membership
+where
+evalexpr_rhai(logic, { name: 'John'}).ok
+┌─────────────┐
+│ group_name  │
+│   varchar   │
+├─────────────┤
+│ shift_leads │
+└─────────────┘
+```
 
-This is a great explanation of the [Hilbert curve](https://www.youtube.com/watch?v=3s7h2MHQtxc).
+Scripting can be more advanced than expressions, you create functions.  It wouldn't be a scripting example without an example of a [Collatz](https://en.wikipedia.org/wiki/Collatz_conjecture) sequence.
 
+```sql
+-- Define a macro that calculates the length of
+-- of the Collatz sequence from a starting value.
+create macro collatz_series_length(n) as
+evalexpr_rhai('
+   fn collatz_series(n) {
+       let count = 0;
+       while n > 1 {
+         count += 1;
+         if n % 2 == 0 {
+             n /= 2;
+         } else {
+             n = n * 3 + 1;
+         }
+       }
+       return count
+  }
+  collatz_series(context.n)
+', {'n': n});
 
+-- Use the defined macro fucntion that calls the
+-- rhai function.
+select range as n,
+collatz_series_length(range).ok::integer as length from range(1000, 2000) limit 5;
+┌───────┬────────┐
+│   n   │ length │
+│ int64 │ int32  │
+├───────┼────────┤
+│  1000 │    111 │
+│  1001 │    142 │
+│  1002 │    111 │
+│  1003 │     41 │
+│  1004 │     67 │
+└───────┴────────┘
+```
 
-### Morton Encoding (Z-order Curve)
+### How can I make the data from the current row accessible to a Rhai expression?
 
-Morton encoding, also known as the Z-order curve, interleaves the binary representations of coordinates into a single integer. It is named after Glenn K. Morton.
+You can just pass the entire row via the context.
 
-**Locality:** Hilbert encoding generally preserves locality better than Morton encoding, making it preferable for applications where spatial proximity matters.
+```sql
+create table employees (name text, state text, zip integer);
+insert into employees values
+  ('Jane', 'FL', 33139),
+  ('John', 'NJ', 08520);
+
+select evalexpr_rhai(
+  '
+  context.row.name + " is in " + context.row.state
+  ',
+  {
+    row: employees
+  }) as result from employees;
+┌───────────────────────────────┐
+│            result             │
+│ union(ok json, error varchar) │
+├───────────────────────────────┤
+│ "Jane is in FL"               │
+│ "John is in NJ"               │
+└───────────────────────────────┘
+
+-- What about augmenting the context, what is passed there?
+-- just return the context.
+select evalexpr_rhai('context',{
+    row_data: employees,
+    'fruit': 'banana'
+  }) as result from employees;
+┌────────────────────────────────────────────────────────────────────────┐
+│                                 result                                 │
+│                     union(ok json, error varchar)                      │
+├────────────────────────────────────────────────────────────────────────┤
+│ {"fruit":"banana","row_data":{"name":"Jane","state":"FL","zip":33139}} │
+│ {"fruit":"banana","row_data":{"name":"John","state":"NJ","zip":8520}}  │
+└────────────────────────────────────────────────────────────────────────┘
+```
 
 ## API
 
-### Encoding
+`evalexpr_rhai(VARCHAR, JSON) -> UNION['ok': JSON, 'error': VARCHAR]`
 
-**Supported types:** Any signed or unsigned integer, float, or double (`INPUT_TYPE`).
-**Output:** The smallest unsigned integer type that can represent the input array.
+The arguments in order are:
 
-### Encoding Functions
+1. The [Rhai](https://rhai.rs) expression to evaluate.
+2. Any context values that will be available to the Rhai expression by accessing a variable called `context`.
 
-* `hilbert_encode(ARRAY[INPUT_TYPE, 1-16])`
-* `morton_encode(ARRAY[INPUT_TYPE, 1-16])`
+The return value is a [union](https://duckdb.org/docs/sql/data_types/union.html) type.  The union type is very similar to the [Result type from Rust](https://doc.rust-lang.org/std/result/).
 
-Output is limited to a 128-bit `UHUGEINT`. The input array size is validated to ensure it fits within this limit.
+If the Rhai expression was successfully evaluated the JSON result of the expression will be returned in the `ok` element of the union.  If there was an error evaluating the expression it will be returned in the `error` element of the expression.
 
-| Input Type | Maximum Number of Elements | Output Type (depends on number of elements) |
-|---|--|-------------|
-| `UTINYINT`   | 16 | 1: `UTINYINT`<br/>2: `USMALLINT`<br/>3-4: `UINTEGER`<br/> 4-8: `UBIGINT`<br/> 8-16: `UHUGEINT`|
-| `USMALLINT`  | 8 | 1: `USMALLINT`<br/>2: `UINTEGER`<br/>3-4: `UBIGINT`<br/>4-8: `UHUGEINT` |
-| `UINTEGER`   | 4 | 1: `UINTEGER`<br/>2: `UBIGINT`<br/>3-4: `UHUGEINT` |
-| `UBIGINT`    | 2 | 1: `UBIGINT`<br/>2: `UHUGEINT` |
-| `FLOAT`      | 4 | 1: `UINTEGER`<br/>2: `UBIGINT`<br/>3-4: `UHUGEINT` |
-| `DOUBLE`     | 2 | 1: `UBIGINT`<br/>2: `UHUGEINT` |
+## When would I use this?
 
-### Encoding examples
+You should use this when you want to have a simple way to write business logic in a database and have it evaluated reasonably quickly.
 
-```sql
-with elements as (
-  select * as id from range(3)
-)
-select
-  a.id as a,
-  b.id as b,
-  hilbert_encode([a.id, b.id]::tinyint[2]) as hilbert,
-  morton_encode([a.id, b.id]::tinyint[2]) as morton
-  from
-elements as a cross join elements as b;
-┌───────┬───────┬─────────┬────────┐
-│   a   │   b   │ hilbert │ morton │
-│ int64 │ int64 │ uint16  │ uint16 │
-├───────┼───────┼─────────┼────────┤
-│     0 │     0 │       0 │      0 │
-│     0 │     1 │       3 │      1 │
-│     0 │     2 │       4 │      4 │
-│     1 │     0 │       1 │      2 │
-│     1 │     1 │       2 │      3 │
-│     1 │     2 │       7 │      6 │
-│     2 │     0 │      14 │      8 │
-│     2 │     1 │      13 │      9 │
-│     2 │     2 │       8 │     12 │
-└───────┴───────┴─────────┴────────┘
-
--- Now sort that same table using Hilbert encoding
-
-┌───────┬───────┬─────────┬────────┐
-│   a   │   b   │ hilbert │ morton │
-│ int64 │ int64 │ uint16  │ uint16 │
-├───────┼───────┼─────────┼────────┤
-│     0 │     0 │       0 │      0 │
-│     1 │     0 │       1 │      2 │
-│     1 │     1 │       2 │      3 │
-│     0 │     1 │       3 │      1 │
-│     0 │     2 │       4 │      4 │
-│     1 │     2 │       7 │      6 │
-│     2 │     2 │       8 │     12 │
-│     2 │     1 │      13 │      9 │
-│     2 │     0 │      14 │      8 │
-└───────┴───────┴─────────┴────────┘
-
--- Do you notice how when A and B are closer to 2 the rows are "closer"?
-```
-
-Encoding doesn't only work with integers it can also be used with floats.
-
-```sql
--- Encode two 32-bit floats into one uint64
-select hilbert_encode([37.8, .2]::float[2]) as hilbert;
-┌─────────────────────┐
-│       hilbert       │
-│       uint64        │
-├─────────────────────┤
-│ 2303654869236839926 │
-└─────────────────────┘
-
--- Since doubles use 64 bits of precision the encoding
--- must result in a uint128
-
-select hilbert_encode([37.8, .2]::double[2]) as hilbert;
-┌────────────────────────────────────────┐
-│                hilbert                 │
-│                uint128                 │
-├────────────────────────────────────────┤
-│ 42534209309512799991913666633619307890 │
-└────────────────────────────────────────┘
-
--- 3 dimensional encoding.
-select hilbert_encode([1.0, 5.0, 6.0]::float[3]) as hilbert;
-┌──────────────────────────────┐
-│           hilbert            │
-│           uint128            │
-├──────────────────────────────┤
-│ 8002395622101954260073409974 │
-└──────────────────────────────┘
-```
-
-Not to be left out you can also encode strings.
-
-```sql
-
-select hilbert_encode([ord(x) for x in split('abcd', '')]::tinyint[4]) as hilbert;
-┌───────────┐
-│  hilbert  │
-│  uint32   │
-├───────────┤
-│ 178258816 │
-└───────────┘
-
---- This splits the string 'abcd' by character, then converts each character into
---- its ordinal representation, finally converts them all to 8 bit integers and then
---- performs encoding.
-
-```
-
-Currently, the input for `hilbert_encode()` and `morton_encode()` functions in DuckDB requires that all elements in the input array be of the same size. If you need to encode different-sized types, you must break up larger data types into units of the smallest data type. Results may vary.
-
-### Decoding Functions
-
-* `hilbert_encode(ANY_UNSIGNED_INTEGER_TYPE, TINYINT, BOOLEAN, BOOLEAN)`
-* `morton_encode(ANY_UNSIGNED_INTEGER_TYPE, TINYINT, BOOLEAN, BOOLEAN)`
-
-The decoding functions take four parameters:
-
-1. **Value to be decoded:** This is always an unsigned integer type.
-2. **Number of elements to decode:** This is a `TINYINT` specifying how many elements should be decoded.
-3. **Float return type:** This `BOOLEAN` indicates whether the values should be returned as floats (REAL or DOUBLE). Set to true to enable this.
-4. **Unsigned return type:** This `BOOLEAN` indicates whether the values should be unsigned if not using floats.
-
-The return type of these functions is always an array, with the element type determined by the number of elements requested and whether "float" handling is enabled by the third parameter.
-
-### Examples
-
-```sql
--- Start out just by encoding two values.
-select hilbert_encode([1, 2]::tinyint[2]) as hilbert;
-┌─────────┐
-│ hilbert │
-│ uint16  │
-├─────────┤
-│       7 │
-└─────────┘
-D select hilbert_decode(7::uint16, 2, false, true) as values;
-┌─────────────┐
-│   values    │
-│ utinyint[2] │
-├─────────────┤
-│ [1, 2]      │
-└─────────────┘
-
--- Show that the decoder works with the encoder.
-select hilbert_decode(hilbert_encode([1, 2]::tinyint[2]), 2, false, false) as values;
-┌─────────────┐
-│   values    │
-│ utinyint[2] │
-├─────────────┤
-│ [1, 2]      │
-└─────────────┘
-
--- FIXME: need to implement a signed or unsigned flag on the decoder function.
-select hilbert_decode(hilbert_encode([1, -2]::bigint[2]), 2, false, false) as values;
-┌───────────┐
-│  values   │
-│ bigint[2] │
-├───────────┤
-│ [1, -2]   │
-└───────────┘
-
-select hilbert_encode([1.0, 5.0, 6.0]::float[3]) as hilbert;
-┌──────────────────────────────┐
-│           hilbert            │
-│           uint128            │
-├──────────────────────────────┤
-│ 8002395622101954260073409974 │
-└──────────────────────────────┘
-
-select hilbert_decode(8002395622101954260073409974::UHUGEINT, 3, True, False) as values;
-┌─────────────────┐
-│     values      │
-│    float[3]     │
-├─────────────────┤
-│ [1.0, 5.0, 6.0] │
-└─────────────────┘
-```
 ## Credits
 
-1. This DuckDB extension utilizes and is named after the [`lindel`](https://crates.io/crates/lindel) Rust crate created by [DoubleHyphen](https://github.com/DoubleHyphen).
+1. This DuckDB extension utilizes and is named after the [`rhai`](https://crates.io/crates/rhai).
 
 2. It also uses the [DuckDB Extension Template](https://github.com/duckdb/extension-template).
 
@@ -296,11 +183,11 @@ The main binaries that will be built are:
 ```sh
 ./build/release/duckdb
 ./build/release/test/unittest
-./build/release/extension/lindel/lindel.duckdb_extension
+./build/release/extension/evalexpr_rhai/evalexpr_rhai.duckdb_extension
 ```
 - `duckdb` is the binary for the duckdb shell with the extension code automatically loaded.
 - `unittest` is the test runner of duckdb. Again, the extension is already linked into the binary.
-- `lindel.duckdb_extension` is the loadable binary as it would be distributed.
+- `evalexpr_rhai.duckdb_extension` is the loadable binary as it would be distributed.
 
 ## Running the extension
 To run the extension code, simply start the shell with `./build/release/duckdb`.
@@ -308,13 +195,13 @@ To run the extension code, simply start the shell with `./build/release/duckdb`.
 Now we can use the features from the extension directly in DuckDB.
 
 ```
-D select hilbert_encode([1.0, 5.0, 6.0]::float[3]) as hilbert;
-┌──────────────────────────────┐
-│           hilbert            │
-│           uint128            │
-├──────────────────────────────┤
-│ 8002395622101954260073409974 │
-└──────────────────────────────┘
+D select evalexpr_rhai('42');
+┌───────────────────────────────┐
+│      evalexpr_rhai('42')      │
+│ union(ok json, error varchar) │
+├───────────────────────────────┤
+│ 42                            │
+└───────────────────────────────┘
 ```
 
 ## Running the tests
@@ -345,13 +232,13 @@ db = new duckdb.Database(':memory:', {"allow_unsigned_extensions": "true"});
 Secondly, you will need to set the repository endpoint in DuckDB to the HTTP url of your bucket + version of the extension
 you want to install. To do this run the following SQL query in DuckDB:
 ```sql
-SET custom_extension_repository='bucket.s3.us-east-1.amazonaws.com/lindel/latest';
+SET custom_extension_repository='bucket.s3.us-east-1.amazonaws.com/evalexpr_rhai/latest';
 ```
 Note that the `/latest` path will allow you to install the latest extension version available for your current version of
 DuckDB. To specify a specific version, you can pass the version instead.
 
 After running these steps, you can install and load your extension using the regular INSTALL/LOAD commands in DuckDB:
 ```sql
-INSTALL lindel
-LOAD lindel
+INSTALL evalexpr_rhai
+LOAD evalexpr_rhai
 ```

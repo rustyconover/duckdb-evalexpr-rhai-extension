@@ -6,39 +6,86 @@
 #include <new>
 
 
+/// A compiled AST
+///
+/// This struct is used to store the compiled AST and the engine that compiled it.
+/// need to be freed using the `free_ast` function.
+struct CompiledAst;
+
+/// A result of a compiled AST
+///
+/// This enum is used to return the result of a compiled AST. It can either be an
+/// `Ok` with a pointer to a `CompiledAst` or an `Err` with a pointer to a `c_char`
+/// that contains the error message.
+struct ResultCompiledAst {
+  enum class Tag {
+    Ok,
+    Err,
+  };
+
+  struct Ok_Body {
+    CompiledAst *_0;
+  };
+
+  struct Err_Body {
+    char *_0;
+  };
+
+  Tag tag;
+  union {
+    Ok_Body ok;
+    Err_Body err;
+  };
+};
+
+struct ResultCString {
+  enum class Tag {
+    Ok,
+    Err,
+  };
+
+  struct Ok_Body {
+    char *_0;
+  };
+
+  struct Err_Body {
+    char *_0;
+  };
+
+  Tag tag;
+  union {
+    Ok_Body ok;
+    Err_Body err;
+  };
+};
+
+using DuckDBMallocFunctionType = void*(*)(size_t);
+
+using DuckDBFreeFunctionType = void(*)(void*);
+
 
 extern "C" {
 
-///Free a value returned from `duckdb_malloc`, `duckdb_value_varchar`, `duckdb_value_blob`, or `duckdb_value_string`.
+/// Compile an expression into an AST
+ResultCompiledAst *compile_ast(const char *expression, size_t expression_len);
+
+/// Evaluate an AST with a context
 ///
-/// ptr: The memory region to de-allocate.
-extern void duckdb_free(void *ptr);
+/// The context is a JSON string that will be deserialized into a `Dynamic` object
+/// and passed to the AST evaluation.
+ResultCString eval_ast(CompiledAst *compiled, const char *context_json, size_t context_len);
 
-///Allocate `size` bytes of memory using the duckdb internal malloc function. Any memory allocated in this manner should be freed using `duckdb_free`.
+void free_ast(CompiledAst *ptr);
+
+void init_memory_allocation(DuckDBMallocFunctionType malloc_fn, DuckDBFreeFunctionType free_fn);
+
+/// Evaluate an expression with a optional context
 ///
-/// size: The number of bytes to allocate.  returns: A pointer to the allocated memory region.
-extern void *duckdb_malloc(size_t size);
-
-void hilbert_encode_u16_var(const uint16_t *ptr, size_t len, void *result);
-
-void hilbert_encode_u32_var(const uint32_t *ptr, size_t len, void *result);
-
-void hilbert_encode_u64_var(const uint64_t *ptr, size_t len, void *result);
-
-void hilbert_encode_u8_var(const uint8_t *ptr, size_t len, void *result);
-
-void morton_encode_u16_var(const uint16_t *ptr, size_t len, void *result);
-
-void morton_encode_u32_var(const uint32_t *ptr, size_t len, void *result);
-
-void morton_encode_u64_var(const uint64_t *ptr, size_t len, void *result);
-
-void morton_encode_u8_var(const uint8_t *ptr, size_t len, void *result);
-
-void perform_decode(uint8_t encoding_type,
-                    uint8_t element_bit_width,
-                    const void *src,
-                    void *dest,
-                    size_t dest_len);
+/// The context is a JSON string that will be deserialized into a `Dynamic` object
+/// and passed to the expression evaluation.
+ResultCString perform_eval(const char *expression,
+                           size_t expression_len,
+                           const char *context_json,
+                           size_t context_len);
 
 } // extern "C"
