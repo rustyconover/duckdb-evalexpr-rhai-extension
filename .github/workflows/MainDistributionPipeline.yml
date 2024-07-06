@@ -19,7 +19,7 @@ jobs:
       duckdb_version: v1.0.0
       extension_name: evalexpr_rhai
       enable_rust: true
-      exclude_archs: "windows_amd64_rtools;windows_amd64"
+      #exclude_archs: "windows_amd64_rtools;windows_amd64"
 
   duckdb-stable-deploy:
     name: Deploy extension binaries
@@ -30,4 +30,4 @@ jobs:
       duckdb_version: v1.0.0
       extension_name: evalexpr_rhai
       deploy_latest: ${{ startsWith(github.ref, 'refs/tags/v') || github.ref == 'refs/heads/main' }}
-      exclude_archs: "windows_amd64_rtools;windows_amd64"
+      #exclude_archs: "windows_amd64_rtools;windows_amd64"
