@@ -136,7 +136,8 @@ inline void evalexprFunc(DataChunk &args, ExpressionState &state, Vector &result
 }
 
 
-
+extern "C" void *duckdb_malloc(size_t size);
+extern "C" void duckdb_free(void *ptr);
 
 // Extension initalization.
 static void LoadInternal(DatabaseInstance &instance) {
