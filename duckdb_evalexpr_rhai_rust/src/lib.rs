@@ -13,6 +13,7 @@ use rhai::{packages::Package, Dynamic, Engine, Scope, AST};
 //use rhai_chrono::ChronoPackage;
 use rhai_fs::FilesystemPackage;
 use rhai_rand::RandomPackage;
+use rhai_sci::SciPackage;
 use rhai_url::UrlPackage;
 
 #[repr(C)]
@@ -65,6 +66,7 @@ pub extern "C" fn compile_ast(
     engine.register_global_module(RandomPackage::new().as_shared_module());
     engine.register_global_module(FilesystemPackage::new().as_shared_module());
     engine.register_global_module(UrlPackage::new().as_shared_module());
+    engine.register_global_module(SciPackage::new().as_shared_module());
     //    engine.register_global_module(ChronoPackage::new().as_shared_module());
 
     let ast = engine.compile(expr_str);
