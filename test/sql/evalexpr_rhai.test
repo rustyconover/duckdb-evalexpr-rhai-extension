@@ -108,7 +108,7 @@ evalexpr_rhai('
 ', {'n': n});
 
 query II
-select collatz_series_length(source_indexes.r).ok::bigint as count, source_indexes.r from source_indexes order by 1 desc limit 10;
+select collatz_series_length(source_indexes.r).ok::bigint as count, source_indexes.r from source_indexes order by 1 desc, 2 limit 10;
 ----
 178	871
 173	937
