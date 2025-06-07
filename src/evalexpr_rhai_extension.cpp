@@ -6,7 +6,6 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
-#include "duckdb/main/extension_util.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
 
 // Include the declarations of things from Rust.
@@ -161,7 +160,7 @@ namespace duckdb
     extern "C" void duckdb_free(void *ptr);
 
     // Extension initalization.
-    static void LoadInternal(DatabaseInstance &instance)
+    static void LoadInternal(ExtensionLoader &loader)
     {
         init_memory_allocation(duckdb_malloc, duckdb_free);
 
@@ -179,13 +178,14 @@ namespace duckdb
         evalexpr_no_context.stability = FunctionStability::VOLATILE;
         evalexpr_rhai.AddFunction(evalexpr_no_context);
 
-        ExtensionUtil::RegisterFunction(instance, evalexpr_rhai);
+        loader.RegisterFunction(evalexpr_rhai);
     }
 
-    void EvalexprRhaiExtension::Load(DuckDB &db)
+    void EvalexprRhaiExtension::Load(ExtensionLoader &loader)
     {
-        LoadInternal(*db.instance);
+        LoadInternal(loader);
     }
+
     std::string EvalexprRhaiExtension::Name()
     {
         return "evalexpr_rhai";
@@ -201,15 +201,9 @@ namespace duckdb
 extern "C"
 {
 
-    DUCKDB_EXTENSION_API void evalexpr_rhai_init(duckdb::DatabaseInstance &db)
+    DUCKDB_CPP_EXTENSION_ENTRY(evalexpr_rhai, loader)
     {
-        duckdb::DuckDB db_wrapper(db);
-        db_wrapper.LoadExtension<duckdb::EvalexprRhaiExtension>();
-    }
-
-    DUCKDB_EXTENSION_API const char *evalexpr_rhai_version()
-    {
-        return "1.0.1";
+        duckdb::LoadInternal(loader);
     }
 }
 
